@@ -113,7 +113,7 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:8080';
+        const API_URL = 'http://localhost:8090';
 
         function showStatus(message, type) {
             const status = document.getElementById('status');
@@ -126,6 +126,77 @@
             const bar = document.getElementById('progressBar');
             progress.style.display = 'block';
             bar.style.width = percent + '%';
+        }
+
+        async function requestUploadUrl(file) {
+            const response = await fetch(`${API_URL}/api/v1/upload/generate-url`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    filename: file.name,
+                    content_type: file.type || 'application/octet-stream'
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to get upload URL');
+            }
+
+            return response.json();
+        }
+
+        async function uploadDirectlyToS3(uploadUrl, file, contentType) {
+            // IMPORTANT: Must explicitly set Content-Type header to match what was signed
+            // Browsers automatically set Content-Type but may use different casing or charset
+            // Explicitly setting it ensures the signature matches
+            const uploadResponse = await fetch(uploadUrl, {
+                method: 'PUT',
+                body: file,
+                headers: {
+                    'Content-Type': contentType || 'application/octet-stream'
+                }
+            });
+
+            if (!uploadResponse.ok) {
+                // Try to get detailed error from S3 response
+                let errorMessage = `S3 upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`;
+                try {
+                    const errorText = await uploadResponse.text();
+                    if (errorText) {
+                        console.error('S3 error response:', errorText);
+                        // Try to extract XML error message
+                        const match = errorText.match(/<Message>([^<]+)<\/Message>/);
+                        if (match) {
+                            errorMessage += ` - ${match[1]}`;
+                        } else {
+                            errorMessage += ` - ${errorText.substring(0, 200)}`;
+                        }
+                    }
+                } catch (e) {
+                    // Ignore if we can't read error body
+                }
+                throw new Error(errorMessage);
+            }
+        }
+
+        async function uploadViaBackend(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch(`${API_URL}/api/v1/upload/file`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Backend upload failed');
+            }
+
+            return response.json();
         }
 
         async function uploadFile() {
@@ -142,45 +213,25 @@
             showStatus('Requesting upload URL from backend...', 'info');
 
             try {
-                // Step 1: Get pre-signed URL from backend
-                const response = await fetch(`${API_URL}/api/v1/upload/generate-url`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        filename: file.name,
-                        content_type: file.type || 'application/octet-stream'
-                    })
-                });
-
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || 'Failed to get upload URL');
-                }
-
-                const { upload_url, file_key, expires_in } = await response.json();
+                const { upload_url, file_key, expires_in } = await requestUploadUrl(file);
                 console.log('Got upload URL for key:', file_key);
                 console.log('URL expires in', expires_in, 'seconds');
 
-                // Step 2: Upload directly to S3
                 showStatus('Uploading to S3...', 'info');
                 setProgress(30);
 
-                const uploadResponse = await fetch(upload_url, {
-                    method: 'PUT',
-                    body: file,
-                    headers: {
-                        'Content-Type': file.type || 'application/octet-stream'
-                    }
-                });
-
-                setProgress(100);
-
-                if (uploadResponse.ok) {
+                try {
+                    await uploadDirectlyToS3(upload_url, file, file.type || 'application/octet-stream');
+                    setProgress(100);
                     showStatus(`Success! File uploaded to S3 with key: ${file_key}`, 'success');
-                } else {
-                    throw new Error(`S3 upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+                } catch (directUploadError) {
+                    console.warn('Direct S3 upload failed, falling back to backend upload:', directUploadError);
+                    showStatus('Direct browser upload was blocked. Retrying through backend...', 'info');
+                    setProgress(60);
+
+                    const fallback = await uploadViaBackend(file);
+                    setProgress(100);
+                    showStatus(`Success! File uploaded through backend with key: ${fallback.file_key}`, 'success');
                 }
 
             } catch (error) {

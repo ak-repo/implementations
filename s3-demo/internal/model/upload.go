@@ -11,6 +11,10 @@ type GenerateUploadURLResponse struct {
 	ExpiresIn int    `json:"expires_in"`
 }
 
+type UploadFileResponse struct {
+	FileKey string `json:"file_key"`
+}
+
 type ErrorResponse struct {
 	Error string `json:"error"`
 }

@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 
@@ -20,12 +22,7 @@ func NewUploadService(s3Client *s3.Client) *UploadService {
 }
 
 func (s *UploadService) GenerateUploadURL(filename, contentType string) (string, string, error) {
-	id := uuid.New().String()
-	extension := filepath.Ext(filename)
-	baseName := strings.TrimSuffix(filename, extension)
-	sanitized := sanitizeFilename(baseName)
-
-	key := fmt.Sprintf("uploads/%s-%s%s", id, sanitized, extension)
+	key := buildFileKey(filename)
 
 	url, err := s.s3Client.GeneratePresignedUploadURL(key, contentType)
 	if err != nil {
@@ -33,6 +30,25 @@ func (s *UploadService) GenerateUploadURL(filename, contentType string) (string,
 	}
 
 	return url, key, nil
+}
+
+func (s *UploadService) UploadFile(ctx context.Context, body io.Reader, filename, contentType string) (string, error) {
+	key := buildFileKey(filename)
+
+	if err := s.s3Client.UploadObject(ctx, key, contentType, body); err != nil {
+		return "", err
+	}
+
+	return key, nil
+}
+
+func buildFileKey(filename string) string {
+	id := uuid.New().String()
+	extension := filepath.Ext(filename)
+	baseName := strings.TrimSuffix(filename, extension)
+	sanitized := sanitizeFilename(baseName)
+
+	return fmt.Sprintf("uploads/%s-%s%s", id, sanitized, extension)
 }
 
 func sanitizeFilename(name string) string {

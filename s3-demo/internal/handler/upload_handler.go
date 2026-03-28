@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"s3-upload-demo/internal/model"
@@ -55,6 +56,45 @@ func (h *UploadHandler) GenerateUploadURL(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer file.Close()
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	key, err := h.service.UploadFile(r.Context(), file, header.Filename, contentType)
+	if err != nil {
+		if err == io.EOF {
+			h.respondError(w, http.StatusBadRequest, "file is empty")
+			return
+		}
+
+		h.respondError(w, http.StatusInternalServerError, "failed to upload file")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(model.UploadFileResponse{FileKey: key})
 }
 
 func (h *UploadHandler) respondError(w http.ResponseWriter, status int, message string) {

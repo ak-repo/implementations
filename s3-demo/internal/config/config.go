@@ -1,8 +1,11 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -14,6 +17,10 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	if err := loadEnv(); err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
 		AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
@@ -40,4 +47,61 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func loadEnv() error {
+	envFile := ".env"
+	explicit := false
+
+	if len(os.Args) > 1 && strings.TrimSpace(os.Args[1]) != "" {
+		envFile = os.Args[1]
+		explicit = true
+	}
+
+	if err := loadEnvFile(envFile); err != nil {
+		if os.IsNotExist(err) && !explicit {
+			return nil
+		}
+
+		return fmt.Errorf("load env file %q: %w", envFile, err)
+	}
+
+	return nil
+}
+
+func loadEnvFile(path string) error {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		line = strings.TrimPrefix(line, "export ")
+
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+
+		if key == "" || os.Getenv(key) != "" {
+			continue
+		}
+
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+
+	return scanner.Err()
 }
