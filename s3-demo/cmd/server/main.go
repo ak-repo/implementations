@@ -32,6 +32,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/upload/generate-url", uploadHandler.GenerateUploadURL)
+	mux.HandleFunc("/api/v1/upload/file", uploadHandler.UploadFile)
+	mux.Handle("/", http.FileServer(http.Dir("frontend")))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -53,7 +55,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Requested-With")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
