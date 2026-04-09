@@ -54,7 +54,7 @@ func main() {
 	// Create server
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8050"
 	}
 
 	server := &http.Server{
